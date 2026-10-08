@@ -84,6 +84,30 @@ export function onAddEffect(actor: RoundedWindowActor): void {
         return;
     }
 
+    _applyEffectInternal(
+        actor,
+        win,
+        actorWidth,
+        actorHeight,
+        frameRect,
+        win.get_buffer_rect(),
+        windowState,
+        win.appears_focused,
+    );
+
+    logTimeEnd('onAddEffect');
+}
+
+function _applyEffectInternal(
+    actor: RoundedWindowActor,
+    win: Meta.Window,
+    actorWidth: number,
+    actorHeight: number,
+    frameRect: Mtk.Rectangle,
+    bufferRect: Mtk.Rectangle,
+    windowState: {maximized: boolean; fullscreen: boolean},
+    appearsFocused: boolean,
+): void {
     unwrapActor(actor)?.add_effect_with_name(
         ROUNDED_CORNERS_EFFECT,
         new RoundedCornersEffect(),
@@ -108,13 +132,11 @@ export function onAddEffect(actor: RoundedWindowActor): void {
             effect,
             state,
             frameRect,
-            win.get_buffer_rect(),
+            bufferRect,
             windowState,
-            win.appears_focused,
+            appearsFocused,
         );
     }
-
-    logTimeEnd('onAddEffect');
 }
 
 export function onRemoveEffect(actor: RoundedWindowActor): void {
@@ -279,7 +301,16 @@ function refreshRoundedCorners(
         if (state || effect) {
             onRemoveEffect(actor);
         }
-        onAddEffect(actor);
+        _applyEffectInternal(
+            actor,
+            win,
+            actorWidth,
+            actorHeight,
+            frameRect,
+            bufferRect,
+            windowState,
+            appearsFocused,
+        );
         return;
     }
 
