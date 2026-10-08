@@ -1,9 +1,8 @@
-import type Clutter from 'gi://Clutter';
 import type {Bounds, BoxShadow} from '../utils/types.js';
 
+import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import GObject from 'gi://GObject';
-import Shell from 'gi://Shell';
 
 import {BORDER_WIDTH, GLOBAL_ROUNDED_CORNER_SETTINGS} from '../utils/config.js';
 import {SHADOW_PADDING} from '../utils/constants.js';
@@ -29,24 +28,11 @@ export function unloadRoundedCornersShader() {
     shaderCode = null;
 }
 
-class UniformLocations {
-    bounds = -1;
-    clipRadius = -1;
-    showBorder = -1;
-    borderedAreaBounds = -1;
-    borderedAreaClipRadius = -1;
-    actorSize = -1;
-    shadowOffset = -1;
-    shadowSigma = -1;
-    shadowSpread = -1;
-    shadowOpacity = -1;
-}
-
 export const RoundedCornersEffect = GObject.registerClass(
     {
         GTypeName: 'RoundedWindowsLite_RoundedCornersEffect',
     },
-    class Effect extends Shell.GLSLEffect {
+    class Effect extends Clutter.ShaderEffect {
         #bounds = [0, 0, 0, 0];
         #borderedAreaBounds = [0, 0, 0, 0];
         #actorSize = [0, 0];
@@ -54,7 +40,10 @@ export const RoundedCornersEffect = GObject.registerClass(
         #showBorderUniform = [0];
         #borderedAreaRadiusUniform = [0];
 
-        #shadowOffsetUniform = [0, 0, 0, 0, 0, 0];
+        // Shadow offsets are packed as vec4 (layers 0 and 1) + vec2 (layer 2)
+        // because ClutterShaderEffect does not support uniform arrays.
+        #shadowOffset01Uniform = [0, 0, 0, 0];
+        #shadowOffset2Uniform = [0, 0];
         #shadowSigmaUniform = [0, 0, 0];
         #shadowSpreadUniform = [0, 0, 0];
         #shadowOpacityUniform = [0, 0, 0];
@@ -83,21 +72,18 @@ export const RoundedCornersEffect = GObject.registerClass(
         #lastShadowSpread = [Number.NaN, Number.NaN, Number.NaN];
         #lastShadowOpacity = [Number.NaN, Number.NaN, Number.NaN];
 
-        #uniformLocations = new UniformLocations();
-        #uniformsCached = false;
-
         // Pre-allocated arrays to avoid Garbage Collection blocks on render
         #sOffset = [0, 0, 0, 0, 0, 0];
         #sSigma = [0, 0, 0];
         #sSpread = [0, 0, 0];
         #sOpacity = [0, 0, 0];
 
-        vfunc_build_pipeline() {
-            this.add_glsl_snippet(
+        // Called by ClutterShaderEffect once per class, on first paint.
+        vfunc_get_static_snippet(): Cogl.Snippet {
+            return Cogl.Snippet.new(
                 Cogl.SnippetHook.FRAGMENT,
                 shaderDeclarations!,
                 shaderCode!,
-                false,
             );
         }
 
@@ -233,57 +219,53 @@ export const RoundedCornersEffect = GObject.registerClass(
                 return;
             }
 
-            if (!this.#cacheUniformLocations()) return;
-
-            const uniforms = this.#uniformLocations;
-
-            this.set_uniform_float(uniforms.bounds, 4, bounds);
+            // ClutterShaderEffect stores uniforms by name and resolves their
+            // locations against the pipeline at paint time.
+            this.set_uniform_float('bounds', 4, bounds);
 
             this.#clipRadius[0] = radius;
             this.#showBorderUniform[0] = showBorderFlag;
             this.#borderedAreaRadiusUniform[0] = borderedAreaRadius;
 
-            this.set_uniform_float(uniforms.clipRadius, 1, this.#clipRadius);
+            this.set_uniform_float('clipRadius', 1, this.#clipRadius);
+            this.set_uniform_float('showBorder', 1, this.#showBorderUniform);
+            this.set_uniform_float('borderedAreaBounds', 4, borderedAreaBounds);
             this.set_uniform_float(
-                uniforms.showBorder,
-                1,
-                this.#showBorderUniform,
-            );
-            this.set_uniform_float(
-                uniforms.borderedAreaBounds,
-                4,
-                borderedAreaBounds,
-            );
-            this.set_uniform_float(
-                uniforms.borderedAreaClipRadius,
+                'borderedAreaClipRadius',
                 1,
                 this.#borderedAreaRadiusUniform,
             );
-            this.set_uniform_float(uniforms.actorSize, 2, actorSize);
+            this.set_uniform_float('actorSize', 2, actorSize);
 
-            copyFloatArray(this.#shadowOffsetUniform, this.#sOffset);
+            this.#shadowOffset01Uniform[0] = this.#sOffset[0];
+            this.#shadowOffset01Uniform[1] = this.#sOffset[1];
+            this.#shadowOffset01Uniform[2] = this.#sOffset[2];
+            this.#shadowOffset01Uniform[3] = this.#sOffset[3];
+            this.#shadowOffset2Uniform[0] = this.#sOffset[4];
+            this.#shadowOffset2Uniform[1] = this.#sOffset[5];
             copyFloatArray(this.#shadowSigmaUniform, this.#sSigma);
             copyFloatArray(this.#shadowSpreadUniform, this.#sSpread);
             copyFloatArray(this.#shadowOpacityUniform, this.#sOpacity);
 
             this.set_uniform_float(
-                uniforms.shadowOffset,
+                'shadowOffset01',
+                4,
+                this.#shadowOffset01Uniform,
+            );
+            this.set_uniform_float(
+                'shadowOffset2',
                 2,
-                this.#shadowOffsetUniform,
+                this.#shadowOffset2Uniform,
             );
+            this.set_uniform_float('shadowSigma', 3, this.#shadowSigmaUniform);
             this.set_uniform_float(
-                uniforms.shadowSigma,
-                1,
-                this.#shadowSigmaUniform,
-            );
-            this.set_uniform_float(
-                uniforms.shadowSpread,
-                1,
+                'shadowSpread',
+                3,
                 this.#shadowSpreadUniform,
             );
             this.set_uniform_float(
-                uniforms.shadowOpacity,
-                1,
+                'shadowOpacity',
+                3,
                 this.#shadowOpacityUniform,
             );
 
@@ -301,43 +283,6 @@ export const RoundedCornersEffect = GObject.registerClass(
             copyFloatArray(this.#lastShadowOpacity, this.#sOpacity);
 
             this.queue_repaint();
-        }
-
-        #cacheUniformLocations() {
-            if (this.#uniformsCached) return true;
-
-            const uniforms = this.#uniformLocations;
-            uniforms.bounds = this.get_uniform_location('bounds');
-            uniforms.clipRadius = this.get_uniform_location('clipRadius');
-            uniforms.showBorder = this.get_uniform_location('showBorder');
-            uniforms.borderedAreaBounds =
-                this.get_uniform_location('borderedAreaBounds');
-            uniforms.borderedAreaClipRadius = this.get_uniform_location(
-                'borderedAreaClipRadius',
-            );
-            uniforms.actorSize = this.get_uniform_location('actorSize');
-            uniforms.shadowOffset = this.get_uniform_location('shadowOffset');
-            uniforms.shadowSigma = this.get_uniform_location('shadowSigma');
-            uniforms.shadowSpread = this.get_uniform_location('shadowSpread');
-            uniforms.shadowOpacity = this.get_uniform_location('shadowOpacity');
-
-            const ready =
-                uniforms.bounds >= 0 &&
-                uniforms.clipRadius >= 0 &&
-                uniforms.showBorder >= 0 &&
-                uniforms.borderedAreaBounds >= 0 &&
-                uniforms.borderedAreaClipRadius >= 0 &&
-                uniforms.actorSize >= 0 &&
-                uniforms.shadowOffset >= 0 &&
-                uniforms.shadowSigma >= 0 &&
-                uniforms.shadowSpread >= 0 &&
-                uniforms.shadowOpacity >= 0;
-
-            if (ready) {
-                this.#uniformsCached = true;
-            }
-
-            return ready;
         }
     },
 );

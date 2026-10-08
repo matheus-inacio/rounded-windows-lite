@@ -13,6 +13,7 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
 import {logDebug} from '../utils/log.js';
+import {getWindowId} from '../utils/window.js';
 import {isPermanentlyIneligible} from './eligibility.js';
 import * as handlers from './event_handlers.js';
 import {ActorSignalManager} from './signal_manager.js';
@@ -81,7 +82,7 @@ export function onWindowCreated(win: Meta.Window): void {
 
     // If wm_class_instance of Meta.Window is null, wait for it to be
     // set before applying the effect.
-    if (win.get_wm_class_instance() == null) {
+    if (getWindowId(win) == null) {
         const notifyId = win.connect('notify::wm-class', () => {
             win.disconnect(notifyId);
             pendingWmClassListeners.delete(win);

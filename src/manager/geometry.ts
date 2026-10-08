@@ -10,13 +10,14 @@ import type Mtk from '@girs/mtk-18';
 import type {Bounds} from '../utils/types.js';
 
 import Meta from 'gi://Meta';
+import {getWindowId} from '../utils/window.js';
 
 /**
  * Compute the shadow insets for a Wayland window that embeds its own
  * client-side shadows (e.g. Kitty, JetBrains IDEs).
  *
  * This is designed to be called **once** per window and cached in the
- * window state, so we avoid calling `get_wm_class_instance()` +
+ * window state, so we avoid calling `getWindowId()` +
  * `toLowerCase()` on every resize event.
  *
  * @param win - The window to inspect.
@@ -29,7 +30,7 @@ export function computeShadowInsets(
         return null;
     }
 
-    const wmClass = win.get_wm_class_instance()?.toLowerCase() ?? '';
+    const wmClass = getWindowId(win)?.toLowerCase() ?? '';
 
     if (wmClass === 'kitty') {
         return [11, 35, 11, 11] as const;

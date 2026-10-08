@@ -10,6 +10,7 @@
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
+import {getWindowId} from '../utils/window.js';
 import {
     BLACKLIST,
     GLOBAL_ROUNDED_CORNER_SETTINGS,
@@ -63,8 +64,11 @@ export function isPermanentlyIneligible(
         _cachedWinType?: Meta.WindowType;
     },
 ): boolean {
-    if (win._cachedWmClass === undefined) {
-        win._cachedWmClass = win.get_wm_class_instance();
+    if (!win._cachedWmClass) {
+        const wmClassInstance = getWindowId(win);
+        if (wmClassInstance) {
+            win._cachedWmClass = wmClassInstance;
+        }
     }
     const wmClass = win._cachedWmClass;
     if (wmClass == null) {
@@ -200,8 +204,9 @@ const KNOWN_LIBADWAITA_APPS = new Set([
 function getAppType(
     win: Meta.Window & {_cachedWmClass?: string | null},
 ): AppType {
-    if (win._cachedWmClass === undefined) {
-        win._cachedWmClass = win.get_wm_class_instance();
+    if (!win._cachedWmClass) {
+        const wmClassInstance = getWindowId(win);
+        if (wmClassInstance) { win._cachedWmClass = wmClassInstance; }
     }
     const wmClass = win._cachedWmClass;
     logTime(`getAppType [${wmClass || 'unknown'}]`);

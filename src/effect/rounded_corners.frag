@@ -9,10 +9,13 @@ uniform float borderedAreaClipRadius;
 uniform float showBorder;
 uniform vec2 actorSize; 
 
-uniform vec2 shadowOffset[3];
-uniform float shadowSigma[3];
-uniform float shadowSpread[3];
-uniform float shadowOpacity[3];
+// ClutterShaderEffect (GNOME 51+) uploads every uniform as a single vecN, so
+// uniform arrays are not supported. The 3 shadow layers are packed in vectors.
+uniform vec4 shadowOffset01; // xy = layer 0 offset, zw = layer 1 offset
+uniform vec2 shadowOffset2;  // layer 2 offset
+uniform vec3 shadowSigma;
+uniform vec3 shadowSpread;
+uniform vec3 shadowOpacity;
 
 float getPointAlpha(vec2 p, vec4 bndInfo, float rad) {
     vec2 q = abs(p - bndInfo.xy) - (bndInfo.zw - rad);
@@ -72,27 +75,33 @@ float roundedBoxShadow(vec2 point, vec2 halfSize, float sigma, float corner) {
     return accumulatedValue;
 }
 
+float shadowLayerAlpha(vec2 p, vec2 offset, float sigma, float spread, float opacity) {
+    vec2 center = bounds.xy + offset;
+    vec2 halfSize = bounds.zw + spread;
+    float corner = max(clipRadius + spread, 0.0);
+
+    float alpha = roundedBoxShadow(p - center, halfSize, sigma, corner);
+    return clamp(alpha, 0.0, 1.0) * (opacity / 100.0);
+}
+
 void main() {
-    vec2 p = cogl_tex_coord0_in.xy * actorSize;
+    vec2 p = cogl_tex_coord_in[0].xy * actorSize;
 
     vec4 windowColor = cogl_color_out;
     float pointAlpha = getPointAlpha(p, bounds, clipRadius);
     windowColor *= pointAlpha; 
     
     float totalShadowAlpha = 0.0;
-    for (int i = 0; i < 3; i++) {
-        float sigma = shadowSigma[i]; 
-        float spread = shadowSpread[i];
-        
-        vec2 center = bounds.xy + shadowOffset[i];
-        vec2 halfSize = bounds.zw + spread;
-        float corner = max(clipRadius + spread, 0.0);
-        
-        float alpha = roundedBoxShadow(p - center, halfSize, sigma, corner);
-        alpha = clamp(alpha, 0.0, 1.0) * (shadowOpacity[i] / 100.0);
-        
-        totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
-    }
+    float alpha;
+
+    alpha = shadowLayerAlpha(p, shadowOffset01.xy, shadowSigma.x, shadowSpread.x, shadowOpacity.x);
+    totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+
+    alpha = shadowLayerAlpha(p, shadowOffset01.zw, shadowSigma.y, shadowSpread.y, shadowOpacity.y);
+    totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+
+    alpha = shadowLayerAlpha(p, shadowOffset2, shadowSigma.z, shadowSpread.z, shadowOpacity.z);
+    totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
     
     vec4 shadowColorPremult = vec4(0.0, 0.0, 0.0, totalShadowAlpha);
     
