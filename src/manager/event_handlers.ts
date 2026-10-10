@@ -189,7 +189,12 @@ export function onUnminimize(actor: RoundedWindowActor): void {
 /** Alias so event_manager.ts can use a descriptive name. */
 export const onSizeChanged = refreshRoundedCorners;
 
-import {DEBUG_MODE, FOCUSED_SHADOW, UNFOCUSED_SHADOW} from '../utils/config.js';
+import {
+    DEBUG_MODE,
+    FOCUSED_SHADOW,
+    UNFOCUSED_SHADOW,
+    ZERO_SHADOWS,
+} from '../utils/config.js';
 
 export function onFocusChanged(actor: RoundedWindowActor): void {
     refreshRoundedCorners(actor);
@@ -356,23 +361,22 @@ function updateEffectUniforms(
     );
     const maximized = windowState.maximized;
     const fullscreen = windowState.fullscreen;
-    const showBorder = !(maximized || fullscreen);
+    const isMaximizedOrFullscreen = maximized || fullscreen;
+    const showBorder = !isMaximizedOrFullscreen;
 
-    let shadowSettings = appearsFocused ? FOCUSED_SHADOW : UNFOCUSED_SHADOW;
+    // Shadows can only be drawn if:
+    // 1. The window is not maximized or fullscreen.
+    // 2. The window has buffer padding or CSD insets where shadows can physically render.
+    const hasShadowPadding =
+        Boolean(state.cachedShadowInsets) ||
+        bufferRect.width !== frameRect.width;
+    const showShadow = !isMaximizedOrFullscreen && hasShadowPadding;
 
-    // If a Wayland window has no native padding (buffer == frame) and no CSD insets,
-    // we cannot draw shadows because the shader cannot draw outside the buffer.
-    // Instead of complex vertex expansion, we just disable the shadow by zeroing opacity.
-    if (
-        showBorder &&
-        !state.cachedShadowInsets &&
-        bufferRect.width === frameRect.width
-    ) {
-        shadowSettings = shadowSettings.map(s => ({
-            ...s,
-            opacity: 0,
-        })) as typeof shadowSettings;
-    }
+    const shadowSettings = showShadow
+        ? appearsFocused
+            ? FOCUSED_SHADOW
+            : UNFOCUSED_SHADOW
+        : ZERO_SHADOWS;
 
     effect.updateUniforms(
         computeBounds(

@@ -102,9 +102,10 @@ void main() {
     windowColor *= pointAlpha; 
     
     // Major GPU Optimization: Only compute multi-layer Gaussian shadows if the
-    // fragment is outside the window or on the antialiased edge. Inside the window,
-    // pointAlpha == 1.0, so (1.0 - pointAlpha) is 0 and shadow is completely discarded.
-    if (pointAlpha < 1.0) {
+    // fragment is outside the window or on the antialiased edge AND at least one
+    // shadow layer has opacity > 0.
+    float maxShadowOpacity = max(shadowOpacity.x, max(shadowOpacity.y, shadowOpacity.z));
+    if (pointAlpha < 1.0 && maxShadowOpacity > 0.0) {
         float totalShadowAlpha = 0.0;
         float alpha;
 

@@ -5,7 +5,6 @@ import Cogl from 'gi://Cogl';
 import GObject from 'gi://GObject';
 
 import {BORDER_WIDTH, GLOBAL_ROUNDED_CORNER_SETTINGS} from '../utils/config.js';
-import {SHADOW_PADDING} from '../utils/constants.js';
 import {readShader} from '../utils/file.js';
 import {logTime, logTimeEnd} from '../utils/log.js';
 
@@ -85,22 +84,6 @@ export const RoundedCornersEffect = GObject.registerClass(
                 shaderDeclarations!,
                 shaderCode!,
             );
-        }
-
-        vfunc_modify_paint_volume(volume: Clutter.PaintVolume): boolean {
-            const padding = SHADOW_PADDING;
-            const origin = volume.get_origin();
-
-            if (origin) {
-                origin.x -= padding;
-                origin.y -= padding;
-                volume.set_origin(origin);
-            }
-
-            volume.set_width(volume.get_width() + padding * 2);
-            volume.set_height(volume.get_height() + padding * 2);
-
-            return true;
         }
 
         updateUniforms(

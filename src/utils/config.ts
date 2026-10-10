@@ -69,6 +69,30 @@ export const UNFOCUSED_SHADOW: [BoxShadow, BoxShadow, BoxShadow] = [
     },
 ];
 
+export const ZERO_SHADOWS: [BoxShadow, BoxShadow, BoxShadow] = [
+    {
+        horizontalOffset: 0,
+        verticalOffset: 0,
+        blurOffset: 0,
+        spreadRadius: 0,
+        opacity: 0,
+    },
+    {
+        horizontalOffset: 0,
+        verticalOffset: 0,
+        blurOffset: 0,
+        spreadRadius: 0,
+        opacity: 0,
+    },
+    {
+        horizontalOffset: 0,
+        verticalOffset: 0,
+        blurOffset: 0,
+        spreadRadius: 0,
+        opacity: 0,
+    },
+];
+
 export const BLACKLIST: Set<string> = new Set();
 /** When false, blacklist entries are excluded from rounding. */
 export const WHITELIST_MODE = false;
