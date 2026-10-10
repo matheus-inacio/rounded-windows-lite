@@ -25,6 +25,7 @@ import {ActorSignalManager} from './signal_manager.js';
 let pendingEffectApplications: WeakMap<Meta.WindowActor, number>;
 let pendingWmClassListeners: WeakMap<Meta.Window, number>;
 let pendingSettleCallbacks: WeakMap<RoundedWindowActor, number>;
+let pendingResizeActors: WeakSet<RoundedWindowActor>;
 let initializedActors: WeakSet<RoundedWindowActor>;
 let destroyedActors: WeakSet<Meta.WindowActor>;
 
@@ -39,6 +40,7 @@ export function init(): void {
     pendingEffectApplications = new WeakMap();
     pendingWmClassListeners = new WeakMap();
     pendingSettleCallbacks = new WeakMap();
+    pendingResizeActors = new WeakSet();
     initializedActors = new WeakSet();
     destroyedActors = new WeakSet();
     actorSignals = new ActorSignalManager();
@@ -177,21 +179,28 @@ export function applyEffectTo(actor: RoundedWindowActor): void {
 
     // Window resized.
     //
-    // The signal has to be connected both to the actor and the texture. Why is
-    // that? I have no idea. But without that, weird bugs can happen. For
-    // example, when using Dash to Dock, all opened windows will be invisible
-    // *unless they are pinned in the dock*. So yeah, GNOME is magic.
+    // Both signals are required because they track different compositor layers:
+    // 1. actor 'notify::size' (ClutterActor): Tracks layout allocation on the stage.
+    //    Essential during window mapping/launching (e.g. Dash to Dock animations)
+    //    where the actor starts at 0x0 and allocates after the buffer is already attached;
+    //    missing this leaves shader bounds at 0x0, rendering windows invisible.
+    // 2. texture 'size-changed' (MetaShapedTexture): Tracks client GPU buffer commits.
+    //    Essential for XWayland clients (where the window actor is sized before the
+    //    backing Wayland surface attaches its first buffer) and viewport/buffer scale changes.
+    //
+    // On Wayland, both fire in the same commit frame. handleResized() debounces them
+    // via a microtask so geometry lookups and shader uniform updates run only once.
     actorSignals!.connect(actor, actor, 'notify::size', () =>
-        handleResized(actor),
+        handleResized(actor, 'actor:notify::size'),
     );
     actorSignals!.connect(actor, texture, 'size-changed', () =>
-        handleResized(actor),
+        handleResized(actor, 'texture:size-changed'),
     );
 
     // Get notified about fullscreen explicitly, since a window must not change in
     // size to go fullscreen
     actorSignals!.connect(actor, metaWindow, 'notify::fullscreen', () =>
-        handleResized(actor),
+        handleResized(actor, 'window:notify::fullscreen'),
     );
 
     // Focus / Workspace changes
@@ -215,6 +224,7 @@ export function applyEffectTo(actor: RoundedWindowActor): void {
 
 export function removeEffectFrom(actor: RoundedWindowActor): void {
     initializedActors.delete(actor);
+    pendingResizeActors.delete(actor);
 
     cancelSettle(actor);
 
@@ -227,22 +237,24 @@ export function removeEffectFrom(actor: RoundedWindowActor): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Handles resize events with a dual synchronous + deferred strategy.
+ * Handles resize events with a dual microtask-coalesced + deferred settle strategy.
  *
- * 1. **Synchronous update** — process every resize signal immediately so the
- *    shader stays as close to correct as possible during active resizing.
+ * 1. **Coalesced update** — debounces back-to-back resize signals within the same
+ *    frame (e.g. `texture:size-changed` and `actor:notify::size` firing in the same
+ *    Wayland buffer commit) via a microtask, ensuring geometry lookups run only once
+ *    after both the texture and actor dimensions are in sync.
  * 2. **Deferred "settle" update** — schedule a `BEFORE_REDRAW` callback that
- *    re-reads all geometry one final time.  During rapid resizing,
+ *    re-reads all geometry one final time. During rapid resizing,
  *    `actor.width`/`actor.height` (Clutter layer) and
  *    `win.get_frame_rect()`/`win.get_buffer_rect()` (Mutter layer) can be
- *    momentarily out of sync.  The settle callback fires after the compositor
+ *    momentarily out of sync. The settle callback fires after the compositor
  *    has reconciled everything, guaranteeing the shader ends up with the
  *    correct final bounds.
  *
  * Each new resize cancels the previous pending settle callback, so only the
  * last one in a burst actually executes.
  */
-function handleResized(actor: RoundedWindowActor): void {
+function handleResized(actor: RoundedWindowActor, source = 'resize'): void {
     if (!isAlive(actor)) return;
 
     if (actor.metaWindow && isPermanentlyIneligible(actor.metaWindow)) {
@@ -253,11 +265,32 @@ function handleResized(actor: RoundedWindowActor): void {
         return;
     }
 
-    // Synchronous: keep the shader close to correct during the resize.
-    handlers.onSizeChanged(actor);
+    if (pendingResizeActors.has(actor)) {
+        logDebug(
+            () =>
+                `[Resize] Coalesced duplicate ${source} signal for "${actor.metaWindow?.title ?? 'window'}"`,
+        );
+        return;
+    }
+    pendingResizeActors.add(actor);
 
-    // Deferred: schedule a final re-sync once the compositor has settled.
-    scheduleSettle(actor);
+    Promise.resolve().then(() => {
+        pendingResizeActors.delete(actor);
+
+        if (!isAlive(actor)) return;
+        if (!initializedActors.has(actor)) return;
+
+        logDebug(
+            () =>
+                `[Resize] Executing resize update triggered by ${source} for "${actor.metaWindow?.title ?? 'window'}"`,
+        );
+
+        // Synchronous: keep the shader close to correct during the resize.
+        handlers.onSizeChanged(actor);
+
+        // Deferred: schedule a final re-sync once the compositor has settled.
+        scheduleSettle(actor);
+    });
 }
 
 function handleFocusChanged(actor: RoundedWindowActor): void {
