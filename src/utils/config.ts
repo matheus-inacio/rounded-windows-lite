@@ -73,4 +73,4 @@ export const BLACKLIST: Set<string> = new Set();
 /** When false, blacklist entries are excluded from rounding. */
 export const WHITELIST_MODE = false;
 export const BORDER_WIDTH = 0.6;
-export const DEBUG_MODE = true;
+export const DEBUG_MODE = false;
