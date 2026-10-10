@@ -9,10 +9,13 @@ uniform float borderedAreaClipRadius;
 uniform float showBorder;
 uniform vec2 actorSize; 
 
-uniform vec2 shadowOffset[3];
-uniform float shadowSigma[3];
-uniform float shadowSpread[3];
-uniform float shadowOpacity[3];
+// ClutterShaderEffect (GNOME 51+) uploads every uniform as a single vecN, so
+// uniform arrays are not supported. The 3 shadow layers are packed in vectors.
+uniform vec4 shadowOffset01; // xy = layer 0 offset, zw = layer 1 offset
+uniform vec2 shadowOffset2;  // layer 2 offset
+uniform vec3 shadowSigma;
+uniform vec3 shadowSpread;
+uniform vec3 shadowOpacity;
 
 float getPointAlpha(vec2 p, vec4 bndInfo, float rad) {
     vec2 q = abs(p - bndInfo.xy) - (bndInfo.zw - rad);
@@ -45,6 +48,12 @@ float roundedBoxShadow(vec2 point, vec2 halfSize, float sigma, float corner) {
         return clamp(0.5 - dist, 0.0, 1.0);
     }
 
+    // 2D bounding-box rejection: Gaussian blur drops to ~0 beyond 4*sigma
+    vec2 maxDist = halfSize + vec2(4.0 * sigma);
+    if (abs(point.x) > maxDist.x || abs(point.y) > maxDist.y) {
+        return 0.0;
+    }
+
     float lowerBound = point.y - halfSize.y;
     float upperBound = point.y + halfSize.y;
     
@@ -72,31 +81,48 @@ float roundedBoxShadow(vec2 point, vec2 halfSize, float sigma, float corner) {
     return accumulatedValue;
 }
 
+float shadowLayerAlpha(vec2 p, vec2 offset, float sigma, float spread, float opacity) {
+    if (opacity <= 0.0) {
+        return 0.0;
+    }
+
+    vec2 center = bounds.xy + offset;
+    vec2 halfSize = bounds.zw + spread;
+    float corner = max(clipRadius + spread, 0.0);
+
+    float alpha = roundedBoxShadow(p - center, halfSize, sigma, corner);
+    return clamp(alpha, 0.0, 1.0) * (opacity / 100.0);
+}
+
 void main() {
-    vec2 p = cogl_tex_coord0_in.xy * actorSize;
+    vec2 p = cogl_tex_coord_in[0].xy * actorSize;
 
     vec4 windowColor = cogl_color_out;
     float pointAlpha = getPointAlpha(p, bounds, clipRadius);
     windowColor *= pointAlpha; 
     
-    float totalShadowAlpha = 0.0;
-    for (int i = 0; i < 3; i++) {
-        float sigma = shadowSigma[i]; 
-        float spread = shadowSpread[i];
-        
-        vec2 center = bounds.xy + shadowOffset[i];
-        vec2 halfSize = bounds.zw + spread;
-        float corner = max(clipRadius + spread, 0.0);
-        
-        float alpha = roundedBoxShadow(p - center, halfSize, sigma, corner);
-        alpha = clamp(alpha, 0.0, 1.0) * (shadowOpacity[i] / 100.0);
-        
+    // Major GPU Optimization: Only compute multi-layer Gaussian shadows if the
+    // fragment is outside the window or on the antialiased edge AND at least one
+    // shadow layer has opacity > 0.
+    float maxShadowOpacity = max(shadowOpacity.x, max(shadowOpacity.y, shadowOpacity.z));
+    if (pointAlpha < 1.0 && maxShadowOpacity > 0.0) {
+        float totalShadowAlpha = 0.0;
+        float alpha;
+
+        alpha = shadowLayerAlpha(p, shadowOffset01.xy, shadowSigma.x, shadowSpread.x, shadowOpacity.x);
         totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+
+        alpha = shadowLayerAlpha(p, shadowOffset01.zw, shadowSigma.y, shadowSpread.y, shadowOpacity.y);
+        totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+
+        alpha = shadowLayerAlpha(p, shadowOffset2, shadowSigma.z, shadowSpread.z, shadowOpacity.z);
+        totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+        
+        vec4 shadowColorPremult = vec4(0.0, 0.0, 0.0, totalShadowAlpha);
+        cogl_color_out = windowColor + shadowColorPremult * (1.0 - pointAlpha);
+    } else {
+        cogl_color_out = windowColor;
     }
-    
-    vec4 shadowColorPremult = vec4(0.0, 0.0, 0.0, totalShadowAlpha);
-    
-    cogl_color_out = windowColor + shadowColorPremult * (1.0 - pointAlpha);
 
     float borderedAreaAlpha = getPointAlpha(p, borderedAreaBounds, borderedAreaClipRadius);
     float borderAlpha = clamp(abs(pointAlpha - borderedAreaAlpha), 0.0, 1.0) * showBorder;

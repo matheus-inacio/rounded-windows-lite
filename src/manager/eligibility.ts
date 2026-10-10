@@ -16,6 +16,7 @@ import {
     WHITELIST_MODE,
 } from '../utils/config.js';
 import {logDebug, logTime, logTimeEnd} from '../utils/log.js';
+import {getWindowId} from '../utils/window.js';
 
 /** The toolkit type of a running application. */
 export type AppType = 'LibAdwaita' | 'LibHandy' | 'Other';
@@ -63,8 +64,11 @@ export function isPermanentlyIneligible(
         _cachedWinType?: Meta.WindowType;
     },
 ): boolean {
-    if (win._cachedWmClass === undefined) {
-        win._cachedWmClass = win.get_wm_class_instance();
+    if (!win._cachedWmClass) {
+        const wmClassInstance = getWindowId(win);
+        if (wmClassInstance) {
+            win._cachedWmClass = wmClassInstance;
+        }
     }
     const wmClass = win._cachedWmClass;
     if (wmClass == null) {
@@ -200,8 +204,11 @@ const KNOWN_LIBADWAITA_APPS = new Set([
 function getAppType(
     win: Meta.Window & {_cachedWmClass?: string | null},
 ): AppType {
-    if (win._cachedWmClass === undefined) {
-        win._cachedWmClass = win.get_wm_class_instance();
+    if (!win._cachedWmClass) {
+        const wmClassInstance = getWindowId(win);
+        if (wmClassInstance) {
+            win._cachedWmClass = wmClassInstance;
+        }
     }
     const wmClass = win._cachedWmClass;
     logTime(`getAppType [${wmClass || 'unknown'}]`);
@@ -240,6 +247,29 @@ function getAppType(
     return appType;
 }
 
+function _bytesIncludesAscii(bytes: Uint8Array, needle: string): boolean {
+    const needleLen = needle.length;
+    const bytesLen = bytes.length;
+    if (needleLen === 0 || bytesLen < needleLen) return false;
+
+    const firstByte = needle.charCodeAt(0);
+    const maxIdx = bytesLen - needleLen;
+
+    for (let i = 0; i <= maxIdx; i++) {
+        if (bytes[i] === firstByte) {
+            let match = true;
+            for (let j = 1; j < needleLen; j++) {
+                if (bytes[i + j] !== needle.charCodeAt(j)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Read `/proc/<pid>/maps` synchronously and search for toolkit library names.
  *
@@ -247,17 +277,19 @@ function getAppType(
  * synchronous read completes in well under 1ms even for large maps files.
  */
 function _detectFromMapsSync(pid: number): AppType {
+    if (pid <= 0) return 'Other';
+
     try {
         // procfs is a RAM-backed virtual filesystem. Sync I/O here is <1ms.
         // Async GLib main-loop overhead takes ~38ms and delays window rendering.
         const [ok, contents] = GLib.file_get_contents(`/proc/${pid}/maps`);
         if (!(ok && contents)) return 'Other';
 
-        const text = new TextDecoder().decode(
-            contents as unknown as Uint8Array,
-        );
-        if (text.includes('libadwaita-1.so')) return 'LibAdwaita';
-        if (text.includes('libhandy-1.so')) return 'LibHandy';
+        // Fast zero-allocation byte search (avoids decoding multi-megabyte UTF-8 strings
+        // for heavy browser, Electron, or Java processes on the UI thread).
+        const bytes = contents as unknown as Uint8Array;
+        if (_bytesIncludesAscii(bytes, 'libadwaita-1.so')) return 'LibAdwaita';
+        if (_bytesIncludesAscii(bytes, 'libhandy-1.so')) return 'LibHandy';
         return 'Other';
     } catch (e) {
         logDebug(`Failed to read /proc/${pid}/maps: ${e}`);
