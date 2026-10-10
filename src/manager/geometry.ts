@@ -10,6 +10,7 @@ import type Mtk from '@girs/mtk-18';
 import type {Bounds} from '../utils/types.js';
 
 import Meta from 'gi://Meta';
+
 import {getWindowId} from '../utils/window.js';
 
 /**

@@ -10,13 +10,13 @@
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
-import {getWindowId} from '../utils/window.js';
 import {
     BLACKLIST,
     GLOBAL_ROUNDED_CORNER_SETTINGS,
     WHITELIST_MODE,
 } from '../utils/config.js';
 import {logDebug, logTime, logTimeEnd} from '../utils/log.js';
+import {getWindowId} from '../utils/window.js';
 
 /** The toolkit type of a running application. */
 export type AppType = 'LibAdwaita' | 'LibHandy' | 'Other';
@@ -206,7 +206,9 @@ function getAppType(
 ): AppType {
     if (!win._cachedWmClass) {
         const wmClassInstance = getWindowId(win);
-        if (wmClassInstance) { win._cachedWmClass = wmClassInstance; }
+        if (wmClassInstance) {
+            win._cachedWmClass = wmClassInstance;
+        }
     }
     const wmClass = win._cachedWmClass;
     logTime(`getAppType [${wmClass || 'unknown'}]`);
