@@ -74,8 +74,6 @@ export async function enableEffect() {
             tracker.onWindowDestroyed(actor);
         },
     );
-
-    globalSignals.connect(global.display, 'restacked', handlers.onRestacked);
 }
 
 export function disableEffect() {

@@ -43,12 +43,3 @@ export const windowStateMap = new WeakMap<
     RoundedWindowActor | Meta.WindowActor,
     WindowEffectState
 >();
-
-/**
- * Iterable set of all actors currently managed by the extension.
- *
- * WeakMap cannot be iterated, so this companion Set lets {@link onRestacked}
- * walk every managed actor without keeping strong references unnecessarily
- * (actors are removed from the Set in `onRemoveEffect`).
- */
-export const managedActors = new Set<RoundedWindowActor | Meta.WindowActor>();

@@ -48,6 +48,12 @@ float roundedBoxShadow(vec2 point, vec2 halfSize, float sigma, float corner) {
         return clamp(0.5 - dist, 0.0, 1.0);
     }
 
+    // 2D bounding-box rejection: Gaussian blur drops to ~0 beyond 4*sigma
+    vec2 maxDist = halfSize + vec2(4.0 * sigma);
+    if (abs(point.x) > maxDist.x || abs(point.y) > maxDist.y) {
+        return 0.0;
+    }
+
     float lowerBound = point.y - halfSize.y;
     float upperBound = point.y + halfSize.y;
     
@@ -76,6 +82,10 @@ float roundedBoxShadow(vec2 point, vec2 halfSize, float sigma, float corner) {
 }
 
 float shadowLayerAlpha(vec2 p, vec2 offset, float sigma, float spread, float opacity) {
+    if (opacity <= 0.0) {
+        return 0.0;
+    }
+
     vec2 center = bounds.xy + offset;
     vec2 halfSize = bounds.zw + spread;
     float corner = max(clipRadius + spread, 0.0);
@@ -91,21 +101,27 @@ void main() {
     float pointAlpha = getPointAlpha(p, bounds, clipRadius);
     windowColor *= pointAlpha; 
     
-    float totalShadowAlpha = 0.0;
-    float alpha;
+    // Major GPU Optimization: Only compute multi-layer Gaussian shadows if the
+    // fragment is outside the window or on the antialiased edge. Inside the window,
+    // pointAlpha == 1.0, so (1.0 - pointAlpha) is 0 and shadow is completely discarded.
+    if (pointAlpha < 1.0) {
+        float totalShadowAlpha = 0.0;
+        float alpha;
 
-    alpha = shadowLayerAlpha(p, shadowOffset01.xy, shadowSigma.x, shadowSpread.x, shadowOpacity.x);
-    totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+        alpha = shadowLayerAlpha(p, shadowOffset01.xy, shadowSigma.x, shadowSpread.x, shadowOpacity.x);
+        totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
 
-    alpha = shadowLayerAlpha(p, shadowOffset01.zw, shadowSigma.y, shadowSpread.y, shadowOpacity.y);
-    totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+        alpha = shadowLayerAlpha(p, shadowOffset01.zw, shadowSigma.y, shadowSpread.y, shadowOpacity.y);
+        totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
 
-    alpha = shadowLayerAlpha(p, shadowOffset2, shadowSigma.z, shadowSpread.z, shadowOpacity.z);
-    totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
-    
-    vec4 shadowColorPremult = vec4(0.0, 0.0, 0.0, totalShadowAlpha);
-    
-    cogl_color_out = windowColor + shadowColorPremult * (1.0 - pointAlpha);
+        alpha = shadowLayerAlpha(p, shadowOffset2, shadowSigma.z, shadowSpread.z, shadowOpacity.z);
+        totalShadowAlpha = totalShadowAlpha + alpha * (1.0 - totalShadowAlpha);
+        
+        vec4 shadowColorPremult = vec4(0.0, 0.0, 0.0, totalShadowAlpha);
+        cogl_color_out = windowColor + shadowColorPremult * (1.0 - pointAlpha);
+    } else {
+        cogl_color_out = windowColor;
+    }
 
     float borderedAreaAlpha = getPointAlpha(p, borderedAreaBounds, borderedAreaClipRadius);
     float borderAlpha = clamp(abs(pointAlpha - borderedAreaAlpha), 0.0, 1.0) * showBorder;

@@ -21,7 +21,6 @@ Shared runtime state:
 
 - `WindowEffectState` — interface describing the per-window data tracked by the extension.
 - `windowStateMap` — WeakMap that associates each managed actor with its state.
-- `managedActors` — iterable Set used by `onRestacked` to walk all active actors.
 
 ## `actor_helpers.ts`
 

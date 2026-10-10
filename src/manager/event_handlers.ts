@@ -30,11 +30,7 @@ import {
     computeShadowInsets,
     computeWindowContentsOffset,
 } from './geometry.js';
-import {
-    managedActors,
-    type WindowEffectState,
-    windowStateMap,
-} from './window_state.js';
+import {type WindowEffectState, windowStateMap} from './window_state.js';
 // ---------------------------------------------------------------------------
 // Public event handlers
 // ---------------------------------------------------------------------------
@@ -121,7 +117,6 @@ function _applyEffectInternal(
     };
 
     windowStateMap.set(actor, state);
-    managedActors.add(actor);
 
     const effect = getRoundedCornersEffect(actor);
     if (effect) {
@@ -156,7 +151,6 @@ export function onRemoveEffect(actor: RoundedWindowActor): void {
         GLib.source_remove(state.unminimizedTimeoutId);
     }
 
-    managedActors.delete(actor);
     windowStateMap.delete(actor);
 }
 
@@ -192,10 +186,6 @@ export function onUnminimize(actor: RoundedWindowActor): void {
     }
 }
 
-export function onRestacked(): void {
-    // No-op. Previously used to re-stack the St.Bin shadow.
-}
-
 /** Alias so event_manager.ts can use a descriptive name. */
 export const onSizeChanged = refreshRoundedCorners;
 
@@ -224,57 +214,63 @@ function refreshRoundedCorners(
         tStart = GLib.get_monotonic_time();
     }
 
-    const frameRect = prefetchedFrameRect ?? win.get_frame_rect();
-    const bufferRect = win.get_buffer_rect();
     // Read actor dimensions once — these cross the JS→C bridge, so avoid
     // re-reading them in computeBounds / updateUniforms.
     const actorWidth = actor.width;
     const actorHeight = actor.height;
 
-    if (
-        frameRect.width <= 0 ||
-        frameRect.height <= 0 ||
-        actorWidth <= 0 ||
-        actorHeight <= 0
-    ) {
+    if (actorWidth <= 0 || actorHeight <= 0) {
         logDebug('Skipping window: Invalid geometry (0x0)');
+        return;
+    }
+
+    const state = windowStateMap.get(actor);
+    const effect = getRoundedCornersEffect(actor);
+    const appearsFocused = win.appears_focused;
+
+    // Fast-path: if dimensions and focus haven't changed since the last refresh,
+    // we can check if geometry matches before querying bufferRect and full states.
+    if (
+        state?.lastRefreshArgs &&
+        effect &&
+        state.lastRefreshArgs.actorWidth === actorWidth &&
+        state.lastRefreshArgs.actorHeight === actorHeight &&
+        state.lastRefreshArgs.appearsFocused === appearsFocused &&
+        !prefetchedFrameRect
+    ) {
+        const frameRect = win.get_frame_rect();
+        if (
+            state.lastRefreshArgs.frameRectX === frameRect.x &&
+            state.lastRefreshArgs.frameRectY === frameRect.y &&
+            state.lastRefreshArgs.frameRectWidth === frameRect.width &&
+            state.lastRefreshArgs.frameRectHeight === frameRect.height
+        ) {
+            const bufferRect = win.get_buffer_rect();
+            if (
+                state.lastRefreshArgs.bufferRectX === bufferRect.x &&
+                state.lastRefreshArgs.bufferRectY === bufferRect.y &&
+                state.lastRefreshArgs.bufferRectWidth === bufferRect.width &&
+                state.lastRefreshArgs.bufferRectHeight === bufferRect.height
+            ) {
+                logDebug(
+                    'Skipping window: Redundant update (cached state matched)',
+                );
+                return;
+            }
+        }
+    }
+
+    const frameRect = prefetchedFrameRect ?? win.get_frame_rect();
+    const bufferRect = win.get_buffer_rect();
+
+    if (frameRect.width <= 0 || frameRect.height <= 0) {
+        logDebug('Skipping window: Invalid frame geometry (0x0)');
         return;
     }
 
     // Read these once here to minimize bridge transitions
     const maximized = win.maximizedHorizontally || win.maximizedVertically;
     const fullscreen = win.fullscreen;
-    const appearsFocused = win.appears_focused;
-
-    const state = windowStateMap.get(actor);
-    const effect = getRoundedCornersEffect(actor);
-
-    // Short-circuit: if the geometry and states haven't changed since the last refresh,
-    // we can completely skip re-evaluating eligibility and updating uniforms.
-    // This drops ~90% of the overhead during window opening/resizing animations.
-    if (state && effect && state.lastRefreshArgs) {
-        const last = state.lastRefreshArgs;
-        if (
-            last.actorWidth === actorWidth &&
-            last.actorHeight === actorHeight &&
-            last.frameRectX === frameRect.x &&
-            last.frameRectY === frameRect.y &&
-            last.frameRectWidth === frameRect.width &&
-            last.frameRectHeight === frameRect.height &&
-            last.bufferRectX === bufferRect.x &&
-            last.bufferRectY === bufferRect.y &&
-            last.bufferRectWidth === bufferRect.width &&
-            last.bufferRectHeight === bufferRect.height &&
-            last.maximized === maximized &&
-            last.fullscreen === fullscreen &&
-            last.appearsFocused === appearsFocused
-        ) {
-            logDebug(
-                'Skipping window: Redundant update (cached state matched)',
-            );
-            return;
-        }
-    }
 
     if (DEBUG_MODE) {
         tAfterProps = GLib.get_monotonic_time();
